@@ -1,8 +1,9 @@
-from flask import Blueprint
+from flask import Blueprint, request
 from core import db
 from core.apis import decorators
 from core.apis.responses import APIResponse
 from core.models.assignments import Assignment
+import json
 
 from .schema import AssignmentSchema, AssignmentGradeSchema
 teacher_assignments_resources = Blueprint('teacher_assignments_resources', __name__)
@@ -12,7 +13,7 @@ teacher_assignments_resources = Blueprint('teacher_assignments_resources', __nam
 @decorators.authenticate_principal
 def list_assignments(p):
     """Returns list of assignments"""
-    teachers_assignments = Assignment.get_assignments_by_teacher()
+    teachers_assignments = Assignment.get_assignments_by_teacher(auth_principal=p)
     teachers_assignments_dump = AssignmentSchema().dump(teachers_assignments, many=True)
     return APIResponse.respond(data=teachers_assignments_dump)
 
