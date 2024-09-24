@@ -1,23 +1,44 @@
+import pytest
 import random
-from sqlalchemy import text
-
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 from core import db
 from core.models.assignments import Assignment, AssignmentStateEnum, GradeEnum
 
+TEST_DATABASE_URL = "sqlite:///:memory:"  
 
-def create_n_graded_assignments_for_teacher(number: int = 0, teacher_id: int = 1) -> int:
-    """
-    Creates 'n' graded assignments for a specified teacher and returns the count of assignments with grade 'A'.
+@pytest.fixture(scope='module')
+def test_db():
+    engine = create_engine(TEST_DATABASE_URL)
 
-    Parameters:
-    - number (int): The number of assignments to be created.
-    - teacher_id (int): The ID of the teacher for whom the assignments are created.
+    from core.models.assignments import Assignment
+    from core.models.users import User 
+    from core.models.teachers import Teacher 
+    from core.models.students import Student  
 
-    Returns:
-    - int: Count of assignments with grade 'A'.
-    """
+    db.metadata.create_all(engine)
+
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    db.session = TestingSessionLocal()
+
+    teacher1 = Teacher(id=1)  
+    teacher2 = Teacher(id=2) 
+    student = Student(id=1)  
+    db.session.add_all([teacher1, teacher2, student])
+    db.session.commit()
+
+    yield db.session  
+
+    db.session.close()  
+    db.metadata.drop_all(engine)  
+
+
+import logging
+
+def create_n_graded_assignments_for_teacher(session, number: int = 0, teacher_id: int = 1) -> int:
     # Count the existing assignments with grade 'A' for the specified teacher
-    grade_a_counter: int = Assignment.filter(
+    grade_a_counter: int = session.query(Assignment).filter(
         Assignment.teacher_id == teacher_id,
         Assignment.grade == GradeEnum.A
     ).count()
@@ -26,6 +47,7 @@ def create_n_graded_assignments_for_teacher(number: int = 0, teacher_id: int = 1
     for _ in range(number):
         # Randomly select a grade from GradeEnum
         grade = random.choice(list(GradeEnum))
+        logging.debug(f"Creating assignment with grade: {grade}")
 
         # Create a new Assignment instance
         assignment = Assignment(
@@ -36,18 +58,19 @@ def create_n_graded_assignments_for_teacher(number: int = 0, teacher_id: int = 1
             state=AssignmentStateEnum.GRADED
         )
 
-        # Add the assignment to the database session
-        db.session.add(assignment)
+        # Add the assignment to the session
+        session.add(assignment)
 
         # Update the grade_a_counter if the grade is 'A'
         if grade == GradeEnum.A:
-            grade_a_counter = grade_a_counter + 1
+            grade_a_counter += 1
 
     # Commit changes to the database
-    db.session.commit()
+    session.commit()
 
     # Return the count of assignments with grade 'A'
     return grade_a_counter
+
 
 
 def test_get_assignments_in_graded_state_for_each_student():
@@ -78,23 +101,23 @@ def test_get_assignments_in_graded_state_for_each_student():
         assert result[0] == sql_result[itr][0]
 
 
-def test_get_grade_A_assignments_for_teacher_with_max_grading():
+def test_get_grade_A_assignments_for_teacher_with_max_grading(test_db):
     """Test to get count of grade A assignments for teacher which has graded maximum assignments"""
 
-    # Read the SQL query from a file
+    # Read the SQL query from a file (this part remains unchanged)
     with open('tests/SQL/count_grade_A_assignments_by_teacher_with_max_grading.sql', encoding='utf8') as fo:
         sql = fo.read()
 
     # Create and grade 5 assignments for the default teacher (teacher_id=1)
-    grade_a_count_1 = create_n_graded_assignments_for_teacher(5)
-    
+    grade_a_count_1 = create_n_graded_assignments_for_teacher(test_db, 5)
+
     # Execute the SQL query and check if the count matches the created assignments
-    sql_result = db.session.execute(text(sql)).fetchall()
+    sql_result = test_db.execute(text(sql)).fetchall()
     assert grade_a_count_1 == sql_result[0][0]
 
     # Create and grade 10 assignments for a different teacher (teacher_id=2)
-    grade_a_count_2 = create_n_graded_assignments_for_teacher(10, 2)
+    grade_a_count_2 = create_n_graded_assignments_for_teacher(test_db, 10, 2)
 
     # Execute the SQL query again and check if the count matches the newly created assignments
-    sql_result = db.session.execute(text(sql)).fetchall()
+    sql_result = test_db.execute(text(sql)).fetchall()
     assert grade_a_count_2 == sql_result[0][0]
